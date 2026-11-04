@@ -20,13 +20,13 @@ function getBackendUrl() {
     return envUrl.trim().replace(/\/+$/, '');
   }
 
-  // Detect whether we are running on a remote/production domain
+  // Detect whether we are running on a remote/production domain (e.g. Netlify)
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
     const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
     if (!isLocalhost) {
-      // In remote production without an explicit backend URL, avoid doomed calls to localhost:8000
-      return null;
+      // Connect directly to the live verified Render backend service
+      return 'https://fieldvision-ai-backend.onrender.com';
     }
   }
 

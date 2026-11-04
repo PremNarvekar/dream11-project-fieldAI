@@ -7,6 +7,14 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  VITE_BACKEND_URL = "https://fieldvision-ai-backend.onrender.com"
+
+# Proxy /api calls to live Render Backend
+[[redirects]]
+  from = "/api/*"
+  to = "https://fieldvision-ai-backend.onrender.com/api/:splat"
+  status = 200
+  force = true
 
 # SPA Fallback Routing
 [[redirects]]
