@@ -1,0 +1,12 @@
+{
+  "name": "fieldvision-ai-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FieldVision AI — Cricket Field Visualization & Tactical Analytics Tool",
+  "scripts": {
+    "dev": "npm --prefix fieldvision-ai run dev",
+    "build": "npm --prefix fieldvision-ai run build",
+    "lint": "npm --prefix fieldvision-ai run lint",
+    "preview": "npm --prefix fieldvision-ai run preview"
+  }
+}

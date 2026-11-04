@@ -1,0 +1,93 @@
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field
+
+class Coordinate(BaseModel):
+    x: float
+    y: float
+
+class FielderTelemetry(BaseModel):
+    id: str
+    name: str
+    role: str
+    currentLabel: str
+    resolvedPosition: str
+    coordinates: Coordinate
+    distanceFromBatMeters: float
+    sector: str # 'Off Side' or 'Leg Side'
+    inCircle: bool
+    zone: str # 'Infield' or 'Deep Boundary'
+
+class StrikerTelemetry(BaseModel):
+    name: str
+    handedness: str # 'RHB' or 'LHB'
+    runs: int
+    balls: int
+    strikeRate: float
+    fours: int
+    sixes: int
+    strongZones: List[str] = []
+    vulnerabilities: List[str] = []
+
+class BowlerTelemetry(BaseModel):
+    name: str
+    style: str
+    overs: str
+    runs: int
+    wickets: int
+    economy: str
+    avgSpeed: str
+    releaseAngle: str
+
+class PresetTelemetry(BaseModel):
+    id: str
+    name: str
+    badge: str
+    tacticalObjective: str
+    maxDeepFieldersAllowed: int
+
+class FieldingRestrictionsTelemetry(BaseModel):
+    isPowerplay: bool
+    maxOutsideCircle: int
+    currentOutsideCircle: int
+    isCompliant: bool
+    violations: List[str] = []
+    legSideCount: int
+    maxLegSideAllowed: int = 5
+    offSideCount: int
+    behindSquareLegCount: int
+    maxBehindSquareLegAllowed: int = 2
+
+class MatchInfoTelemetry(BaseModel):
+    tournament: str
+    matchType: str
+    venue: str
+    innings: Dict[str, Any]
+    pitchReport: Dict[str, Any]
+
+class FieldTelemetryPayload(BaseModel):
+    matchInfo: MatchInfoTelemetry
+    striker: StrikerTelemetry
+    bowler: BowlerTelemetry
+    preset: PresetTelemetry
+    fieldingRestrictions: FieldingRestrictionsTelemetry
+    fielders: List[FielderTelemetry]
+
+class TacticalAdviceRequest(BaseModel):
+    question: str
+    telemetry: FieldTelemetryPayload
+
+class FielderAdjustment(BaseModel):
+    fielderId: str
+    currentPosition: str
+    recommendedPosition: str
+    targetX: float = Field(..., description="Target SVG X coordinate (between 80 and 820)")
+    targetY: float = Field(..., description="Target SVG Y coordinate (between 80 and 820)")
+    explanation: str
+
+class TacticalAdviceResponse(BaseModel):
+    tacticalSummary: str
+    identifiedFieldGaps: List[str]
+    recommendedAdjustments: List[FielderAdjustment]
+    explanations: List[str]
+    applicableRuleWarnings: List[str]
+    suggestedPreset: Optional[str] = None

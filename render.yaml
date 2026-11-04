@@ -1,0 +1,20 @@
+# Render Blueprint Specification for FieldVision AI Backend
+
+services:
+  - type: web
+    name: fieldvision-ai-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /api/health
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "https://fieldvision-ai.netlify.app,http://localhost:5173"
+      - key: HOST
+        value: "0.0.0.0"
