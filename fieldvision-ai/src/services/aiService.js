@@ -110,8 +110,9 @@ export async function queryAITacticalAdvisor(question, telemetry) {
     };
   }
 
+  // Allow up to 60s for Render free-tier cold starts and Gemini 2.5 structured generation
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
 
   try {
     const res = await fetch(`${backendUrl}/api/tactical-advice`, {
@@ -137,7 +138,9 @@ export async function queryAITacticalAdvisor(question, telemetry) {
     }
   } catch (err) {
     clearTimeout(timeoutId);
-    console.info('Remote backend unavailable, using local tactical heuristics:', err.message);
+    if (err.name !== 'AbortError') {
+      console.info('Backend request notice:', err.message);
+    }
   }
 
   // Graceful local fallback without hardcoded player names or arbitrary confidence percentages
