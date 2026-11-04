@@ -7,7 +7,31 @@ import {
   BOUNDARY_RADIUS 
 } from '../utils/cricketCalculations';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+/**
+ * Resolves the backend API base URL safely across environments.
+ * - If VITE_BACKEND_URL is explicitly set (e.g. Render production URL), use it.
+ * - If running in production (e.g. *.netlify.app) and no backend URL is set, return null
+ *   to run the rich on-device tactical heuristic engine without throwing browser network errors.
+ * - If running locally on localhost/127.0.0.1, fallback to local backend at http://localhost:8000.
+ */
+function getBackendUrl() {
+  const envUrl = import.meta.env.VITE_BACKEND_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim().length > 0) {
+    return envUrl.trim().replace(/\/+$/, '');
+  }
+
+  // Detect whether we are running on a remote/production domain
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+    if (!isLocalhost) {
+      // In remote production without an explicit backend URL, avoid doomed calls to localhost:8000
+      return null;
+    }
+  }
+
+  return 'http://localhost:8000';
+}
 
 /**
  * Validates AI-generated fielder adjustments:
@@ -74,11 +98,23 @@ export function validateAdjustmentRules(currentFielders, adjustments, presetId, 
  * Uses an AbortController with a 15-second timeout to prevent frontend hangs.
  */
 export async function queryAITacticalAdvisor(question, telemetry) {
+  const backendUrl = getBackendUrl();
+
+  // If no live backend is available (e.g. deployed on Netlify without Render URL yet),
+  // run the local rule-based tactical engine directly without attempting a doomed network call to localhost
+  if (!backendUrl) {
+    return {
+      success: false,
+      isLocalEngine: true,
+      fallback: generateLocalFallbackResponse(question, telemetry),
+    };
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const res = await fetch(`${BACKEND_URL}/api/tactical-advice`, {
+    const res = await fetch(`${backendUrl}/api/tactical-advice`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -101,7 +137,7 @@ export async function queryAITacticalAdvisor(question, telemetry) {
     }
   } catch (err) {
     clearTimeout(timeoutId);
-    console.warn('Backend query error or timeout, utilizing local tactical fallback:', err.message);
+    console.info('Remote backend unavailable, using local tactical heuristics:', err.message);
   }
 
   // Graceful local fallback without hardcoded player names or arbitrary confidence percentages
