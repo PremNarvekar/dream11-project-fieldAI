@@ -44,9 +44,12 @@ Rules & Guidelines:
 
 def generate_tactical_advice(question: str, telemetry: FieldTelemetryPayload) -> TacticalAdviceResponse:
     """
-    Calls the Gemini API using the official Google GenAI Python SDK,
-    or falls back gracefully to a rules-backed tactical calculation if API key is not configured.
+    Calls the Gemini API using the official Google GenAI Python SDK with automatic model failover,
+    or falls back gracefully to a rules-backed tactical calculation if API key is not configured or all models busy.
     """
+    if isinstance(telemetry, dict):
+        telemetry = FieldTelemetryPayload(**telemetry)
+
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
 
     # Detect placeholder / fake development keys
@@ -63,9 +66,10 @@ def generate_tactical_advice(question: str, telemetry: FieldTelemetryPayload) ->
             from google.genai import types
 
             client = genai.Client(api_key=api_key)
+            telemetry_data = telemetry.model_dump() if hasattr(telemetry, "model_dump") else dict(telemetry)
             prompt = f"""
 Current Match & Field Telemetry:
-{json.dumps(telemetry.model_dump(), indent=2)}
+{json.dumps(telemetry_data, indent=2)}
 
 User Question / Tactical Inquiry:
 "{question}"
@@ -73,24 +77,35 @@ User Question / Tactical Inquiry:
 Analyze the spatial coordinates, gaps, and match context. Produce an optimal, rule-compliant field recommendation.
 """
 
-            # Request structured output via Gemini with sub-second thinking latency
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    response_mime_type="application/json",
-                    response_schema=TacticalAdviceResponse,
-                    temperature=0.2,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                ),
-            )
+            # Cascade across verified available flash models in case of temporary 503 load spikes
+            candidate_models = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.5-flash"]
+            response = None
+            used_model = "gemini-2.5-flash"
 
-            if response.text:
+            for model_name in candidate_models:
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=SYSTEM_INSTRUCTION,
+                            response_mime_type="application/json",
+                            response_schema=TacticalAdviceResponse,
+                            temperature=0.2,
+                        ),
+                    )
+                    if response and response.text:
+                        used_model = model_name
+                        break
+                except Exception as model_err:
+                    logger.warning(f"Gemini model {model_name} transient error: {model_err}, trying next candidate...")
+                    continue
+
+            if response and response.text:
                 data = json.loads(response.text)
                 advice = TacticalAdviceResponse(**data)
                 advice.isLiveAI = True
-                advice.modelUsed = "gemini-2.5-flash"
+                advice.modelUsed = used_model
 
                 # Validate and sanitize coordinates against ICC rules
                 sanitized_adj, warnings = validate_and_sanitize_adjustments(
@@ -106,12 +121,15 @@ Analyze the spatial coordinates, gaps, and match context. Produce an optimal, ru
                 return advice
 
         except Exception as e:
-            logger.error(f"Gemini API call failed, using rule-based tactical fallback: {e}")
+            logger.error(f"Gemini API cascade failed, using rule-based tactical fallback: {e}")
 
     # Fallback: Rule-backed tactical heuristics without arbitrary percentages or hardcoded player names
     return generate_rule_based_fallback(question, telemetry)
 
 def generate_rule_based_fallback(question: str, telemetry: FieldTelemetryPayload) -> TacticalAdviceResponse:
+    if isinstance(telemetry, dict):
+        telemetry = FieldTelemetryPayload(**telemetry)
+
     striker = telemetry.striker
     bowler = telemetry.bowler
     preset = telemetry.preset
