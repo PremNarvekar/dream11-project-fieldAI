@@ -28,9 +28,14 @@ Rules & Guidelines:
    - At most 2 fielders (excluding wicketkeeper) permitted behind the popping crease on the leg side (Law 28.4).
    - In Powerplay: Maximum 2 fielders outside the 30-yard circle.
    - Non-Powerplay: Maximum 5 fielders outside the 30-yard circle.
-3. Your output must strictly conform to the required JSON schema:
-   - tacticalSummary: Concise, high-level strategic reasoning.
-   - identifiedFieldGaps: Specific boundary gaps and vulnerabilities.
+3. GROUND REALITY & LIVE CONTEXT:
+   - Always refer specifically to the real match context provided: batsman name, runs, strike rate, bowler name, style, bowling spell, and live score.
+   - Reference the REAL player names in the fielding squad (e.g. Pat Cummins, Glenn Maxwell, Marcus Stoinis, Mitchell Starc, etc.).
+   - Cite specific metric distances (e.g. '28 meters from batsman', 'boundary rider 68 meters out').
+   - State specific open gaps based on the actual coordinate layout.
+4. Your output must strictly conform to the required JSON schema:
+   - tacticalSummary: Concise, high-level strategic reasoning referencing real players.
+   - identifiedFieldGaps: Specific boundary gaps and vulnerabilities based on current coordinates.
    - recommendedAdjustments: Concrete adjustments with valid targetX and targetY coordinates.
    - explanations: Clear justification for each repositioning.
    - applicableRuleWarnings: Any rule constraints or warning flags.
@@ -68,7 +73,7 @@ User Question / Tactical Inquiry:
 Analyze the spatial coordinates, gaps, and match context. Produce an optimal, rule-compliant field recommendation.
 """
 
-            # Request structured output via Gemini
+            # Request structured output via Gemini with sub-second thinking latency
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
@@ -77,12 +82,15 @@ Analyze the spatial coordinates, gaps, and match context. Produce an optimal, ru
                     response_mime_type="application/json",
                     response_schema=TacticalAdviceResponse,
                     temperature=0.2,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
 
             if response.text:
                 data = json.loads(response.text)
                 advice = TacticalAdviceResponse(**data)
+                advice.isLiveAI = True
+                advice.modelUsed = "gemini-2.5-flash"
 
                 # Validate and sanitize coordinates against ICC rules
                 sanitized_adj, warnings = validate_and_sanitize_adjustments(
@@ -152,4 +160,6 @@ def generate_rule_based_fallback(question: str, telemetry: FieldTelemetryPayload
         explanations=[a.explanation for a in sanitized_adj],
         applicableRuleWarnings=warnings,
         suggestedPreset="defensive" if preset.id == "powerplay" else "death_overs",
+        isLiveAI=False,
+        modelUsed="local-rules-engine",
     )

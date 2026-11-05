@@ -150,8 +150,9 @@ async function runE2ETests() {
   // ====================================================
   console.log('\nTEST 6: Live Backend API & Gemini AI Tactical Recommendations');
   let aiResponse = null;
+  const backendUrl = process.env.BACKEND_URL || 'https://fieldvision-ai-backend.onrender.com';
   try {
-    const res = await fetch('http://127.0.0.1:8000/api/tactical-advice', {
+    const res = await fetch(`${backendUrl}/api/tactical-advice`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -159,7 +160,7 @@ async function runE2ETests() {
         telemetry: telemetry
       })
     });
-    assert(res.status === 200, 'FastAPI /api/tactical-advice returned HTTP 200 OK');
+    assert(res.status === 200, `FastAPI /api/tactical-advice (${backendUrl}) returned HTTP 200 OK`);
     aiResponse = await res.json();
     assert(typeof aiResponse.tacticalSummary === 'string' && aiResponse.tacticalSummary.length > 20, 
       `AI generated tactical summary: "${aiResponse.tacticalSummary.substring(0, 75)}..."`);

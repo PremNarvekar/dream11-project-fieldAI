@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { 
   Sparkles, 
   TrendingUp, 
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { AI_TACTICAL_DATA } from '../data/mockAIResponses';
 import { queryAITacticalAdvisor, validateAdjustmentRules } from '../services/aiService';
+import { isInsideCircle } from '../utils/cricketCalculations';
 
 export function AITacticalPanel({ 
   activePresetId, 
@@ -34,14 +35,116 @@ export function AITacticalPanel({
   const bowlerName = matchData.currentBowler.playerName || matchData.currentBowler.name;
   const bowlerTeam = matchData.currentBowler.teamShortName || matchData.bowlingTeam.teamShortName || 'AUS';
 
+  // Real-time dynamic metrics calculated directly from actual fielder coordinates
+  const infieldCount = useMemo(() => {
+    return fielders.filter(f => f.ring === 'inner' || isInsideCircle(f)).length;
+  }, [fielders]);
+
+  const deepCount = useMemo(() => {
+    return fielders.filter(f => f.ring === 'outer' && !isInsideCircle(f)).length;
+  }, [fielders]);
+
+  const dotBallPressure = useMemo(() => {
+    // 8 infielders = ~88%, 5 infielders = ~60%, 3 infielders = ~38%
+    return Math.min(96, Math.max(25, Math.round((infieldCount / 9) * 88 + 8)));
+  }, [infieldCount]);
+
+  const boundaryContainment = useMemo(() => {
+    // 5 deep = 88%, 4 deep = 72%, 2 deep = 40%
+    return Math.min(95, Math.max(20, Math.round((deepCount / 5) * 82 + 6)));
+  }, [deepCount]);
+
+  // Real-time spatial gap analysis computed from active ground coordinates
+  const realTimeGaps = useMemo(() => {
+    const gaps = [];
+
+    // Check Off-side deep cover corridor (for RHB: x < 350, y < 450)
+    const hasDeepCover = fielders.some(f => {
+      const isOffSide = handedness === 'RHB' ? f.x < 420 : f.x > 480;
+      const isDeep = !isInsideCircle(f);
+      const isForward = f.y < 460 && f.y > 220;
+      return isOffSide && isDeep && isForward;
+    });
+
+    if (!hasDeepCover) {
+      gaps.push({
+        id: 'gap_cover',
+        type: 'warning',
+        category: 'Off-Side Gap',
+        title: 'Exposed Corridor: Deep Extra Cover Driving Lane',
+        description: `With ${strikerName} (${strikerTeam}, ${handedness}) facing ${bowlerName}, leaving the 30°-60° off-side boundary unmanned invites aerial and ground boundaries.`,
+        recommendation: 'Position Deep Extra Cover 25m deeper to protect the boundary rope.',
+        impactScore: 'High Boundary Risk',
+      });
+    }
+
+    // Check Leg-side deep mid-wicket corridor
+    const hasDeepMidWicket = fielders.some(f => {
+      const isLegSide = handedness === 'RHB' ? f.x > 480 : f.x < 420;
+      const isDeep = !isInsideCircle(f);
+      const isForward = f.y < 490 && f.y > 220;
+      return isLegSide && isDeep && isForward;
+    });
+
+    if (!hasDeepMidWicket) {
+      gaps.push({
+        id: 'gap_midwicket',
+        type: 'warning',
+        category: 'Leg-Side Gap',
+        title: 'Cow Corner / Deep Mid-Wicket Vacuum',
+        description: `Pull shots and flicks towards the 90°-135° leg-side arc are vulnerable to boundary leakage.`,
+        recommendation: 'Deploy Deep Mid-Wicket on the fence to contain lofted leg-side shots.',
+        impactScore: 'Elevated Risk',
+      });
+    }
+
+    // Check Third Man boundary protection
+    const hasThirdMan = fielders.some(f => {
+      const isOffSide = handedness === 'RHB' ? f.x < 450 : f.x > 450;
+      const isBehind = f.y > 520;
+      return isOffSide && isBehind;
+    });
+
+    if (!hasThirdMan) {
+      gaps.push({
+        id: 'gap_thirdman',
+        type: 'info',
+        category: 'Behind Square',
+        title: 'Third Man Unattended',
+        description: `Thick edges and late cuts off ${bowlerName}'s pace will race fine to the boundary.`,
+        recommendation: 'Drop a boundary rider to Deep Third Man.',
+        impactScore: 'Edged Boundary Risk',
+      });
+    }
+
+    // Always include Law 28 status based on real positions
+    const isCompliant = telemetry?.fieldingRestrictions?.isCompliant ?? true;
+    const legSideCount = telemetry?.fieldingRestrictions?.legSideCount ?? 5;
+    const behindSquare = telemetry?.fieldingRestrictions?.behindSquareLegCount ?? 1;
+
+    gaps.push({
+      id: 'compliance_card',
+      type: isCompliant ? 'success' : 'warning',
+      category: 'ICC Law 28 Restrictions',
+      title: isCompliant ? 'Fielding Restrictions Verified' : 'Rule Breach Detected',
+      description: `${legSideCount}/5 on Leg Side • ${behindSquare}/2 Behind Square • ${deepCount}/${telemetry?.fieldingRestrictions?.maxOutsideCircle ?? 5} Outside 30yd Circle.`,
+      recommendation: isCompliant ? 'Field formation is 100% legal.' : 'Adjust illegal fielders immediately.',
+      impactScore: isCompliant ? 'Fully Compliant' : 'Illegal Placement',
+    });
+
+    return gaps;
+  }, [fielders, handedness, strikerName, strikerTeam, bowlerName, telemetry, deepCount]);
+
   const [chatLog, setChatLog] = useState([
     {
       type: 'ai',
       id: 'welcome',
-      summary: `Tactical analysis active for ${strikerName} (${strikerTeam}, ${handedness}) against ${bowlerName} (${bowlerTeam}, ${matchData.currentBowler.style}).`,
+      isLiveAI: false,
+      summary: `Real-time spatial telemetry active for ${strikerName} (${strikerTeam}, ${handedness}) against ${bowlerName} (${bowlerTeam}, ${matchData.currentBowler.style}).`,
       bullets: [
-        `Striker's preferred scoring zones: ${(matchData.currentStriker.strongZones || ['Extra Cover', 'Mid-Wicket']).slice(0, 2).join(', ')}.`,
+        `Striker's current scoring zones: ${(matchData.currentStriker.strongZones || ['Extra Cover', 'Mid-Wicket']).slice(0, 2).join(', ')}.`,
         `Recommended bowling target: ${matchData.currentStriker.vulnerabilities?.[0] || 'Tight off-stump channel on a back of a length'}.`,
+        `Real field telemetry: ${fielders.length} fielders loaded with live coordinates and metric distances.`,
       ],
       fieldGaps: [
         'Deep extra cover driving corridor is open', 
@@ -54,7 +157,7 @@ export function AITacticalPanel({
   const [isThinking, setIsThinking] = useState(false);
   const [actionFeedback, setActionFeedback] = useState(null);
 
-  // Handle asking a question
+  // Handle asking a question - connects directly to live Gemini LLM with real telemetry
   const handleAskQuestion = async (queryText) => {
     const q = queryText || question;
     if (!q.trim()) return;
@@ -65,15 +168,20 @@ export function AITacticalPanel({
     setIsThinking(true);
     setActionFeedback(null);
 
-    // Call AI service (FastAPI backend with local dynamic fallback)
+    // Call live AI service with full telemetry payload
     const result = await queryAITacticalAdvisor(q, telemetry);
     const aiData = result.success ? result.data : result.fallback;
+    const isLive = result.success && aiData?.isLiveAI !== false;
 
     setChatLog((prev) => [
       ...prev,
       {
         type: 'ai',
         id: Date.now(),
+        isLiveAI: isLive,
+        modelUsed: aiData?.modelUsed || (isLive ? 'gemini-2.5-flash' : 'local-rules-engine'),
+        telemetryTimestamp: new Date().toLocaleTimeString(),
+        fieldersAnalyzed: telemetry.fielders.length,
         summary: aiData?.tacticalSummary || aiData?.summary || 'Tactical analysis completed.',
         bullets: aiData?.explanations || aiData?.bullets || [],
         fieldGaps: aiData?.identifiedFieldGaps || [],
@@ -122,11 +230,11 @@ export function AITacticalPanel({
               </h3>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-semibold border border-emerald-200/60">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                Gemini 2.5
+                Gemini 2.5 Flash
               </span>
             </div>
             <p className="text-xs text-zinc-500 font-normal">
-              Field gap analysis, match tactics & Law 28 validation
+              Live spatial coordinates & real telemetry analysis
             </p>
           </div>
         </div>
@@ -149,28 +257,38 @@ export function AITacticalPanel({
         </div>
       </div>
 
-      {/* 2. Real-Time Tactical Balance Cards */}
+      {/* 2. Real-Time Dynamic Tactical Balance Cards (Computed from Live Field Coordinates) */}
       <div className="grid grid-cols-2 gap-3 my-4">
-        <div className="bg-[#f8faf9] p-3.5 rounded-2xl border border-zinc-200/70">
+        <div className="bg-[#f8faf9] p-3.5 rounded-2xl border border-zinc-200/70 transition-all">
           <div className="flex items-center justify-between text-xs text-zinc-600 mb-1.5">
             <span className="font-medium">Dot-Ball Pressure</span>
-            <span className="font-bold font-display text-zinc-950 text-sm">86%</span>
+            <span className="font-bold font-display text-zinc-950 text-sm">{dotBallPressure}%</span>
           </div>
           <div className="w-full h-1.5 bg-zinc-200/80 rounded-full overflow-hidden">
-            <div className="h-full bg-zinc-900 rounded-full" style={{ width: '86%' }}></div>
+            <div 
+              className="h-full bg-zinc-900 rounded-full transition-all duration-500" 
+              style={{ width: `${dotBallPressure}%` }}
+            ></div>
           </div>
-          <span className="text-[10px] text-zinc-500 mt-1 block">Infield ring choking singles</span>
+          <span className="text-[10px] text-zinc-500 mt-1 block font-mono">
+            {infieldCount} infielders cutting singles
+          </span>
         </div>
 
-        <div className="bg-[#f8faf9] p-3.5 rounded-2xl border border-zinc-200/70">
+        <div className="bg-[#f8faf9] p-3.5 rounded-2xl border border-zinc-200/70 transition-all">
           <div className="flex items-center justify-between text-xs text-zinc-600 mb-1.5">
             <span className="font-medium">Boundary Containment</span>
-            <span className="font-bold font-display text-emerald-700 text-sm">82%</span>
+            <span className="font-bold font-display text-emerald-700 text-sm">{boundaryContainment}%</span>
           </div>
           <div className="w-full h-1.5 bg-zinc-200/80 rounded-full overflow-hidden">
-            <div className="h-full bg-emerald-600 rounded-full" style={{ width: '82%' }}></div>
+            <div 
+              className="h-full bg-emerald-600 rounded-full transition-all duration-500" 
+              style={{ width: `${boundaryContainment}%` }}
+            ></div>
           </div>
-          <span className="text-[10px] text-zinc-500 mt-1 block">Boundary riders stationed</span>
+          <span className="text-[10px] text-zinc-500 mt-1 block font-mono">
+            {deepCount} boundary riders stationed
+          </span>
         </div>
       </div>
 
@@ -190,9 +308,9 @@ export function AITacticalPanel({
         </div>
       )}
 
-      {/* 4. Editorial Highlight Cards */}
+      {/* 4. Real-Time Spatial Gaps & Field Insights (Calculated Live from Ground Positions) */}
       <div className="space-y-2.5 mb-4 max-h-[175px] overflow-y-auto pr-1">
-        {AI_TACTICAL_DATA.insights.map((ins) => (
+        {realTimeGaps.map((ins) => (
           <div 
             key={ins.id}
             className={`p-3.5 rounded-2xl border text-xs transition-all ${
@@ -240,7 +358,7 @@ export function AITacticalPanel({
             Tactical Advisory Log
           </span>
           <span className="text-[11px] text-zinc-400">
-            Ask any tactical question
+            Ask any real tactical question
           </span>
         </div>
 
@@ -259,11 +377,16 @@ export function AITacticalPanel({
                 </div>
               ) : (
                 <div className="bg-[#fbfcfb] border border-zinc-200/90 rounded-2xl rounded-tl-sm p-4 text-zinc-800 shadow-sm w-full space-y-2.5">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between border-b border-zinc-100 pb-2">
                     <span className="font-bold text-zinc-950 flex items-center gap-1.5 text-xs">
-                      <span className="w-2 h-2 rounded-full bg-zinc-950"></span>
-                      Tactical Assessment
+                      <span className={`w-2 h-2 rounded-full ${msg.isLiveAI ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-950'}`}></span>
+                      {msg.isLiveAI ? 'Gemini 2.5 Flash Strategy' : 'Tactical Assessment'}
                     </span>
+                    {msg.isLiveAI && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-semibold border border-emerald-200 font-mono">
+                        ✨ Live LLM • {msg.fieldersAnalyzed || 11} Players
+                      </span>
+                    )}
                   </div>
 
                   <p className="text-xs text-zinc-800 font-medium leading-relaxed">
@@ -309,7 +432,7 @@ export function AITacticalPanel({
                     </div>
                   )}
 
-                  {/* Action Buttons: Compare Before & After (Requirement G) AND Apply Field Setup */}
+                  {/* Action Buttons: Compare Before & After AND Apply Field Setup */}
                   {msg.adjustments && msg.adjustments.length > 0 && (
                     <div className="mt-2.5 pt-2.5 border-t border-zinc-200/80 flex flex-wrap items-center justify-between gap-2">
                       <span className="text-[11px] text-zinc-500 flex items-center gap-1 font-medium">
@@ -361,12 +484,12 @@ export function AITacticalPanel({
           {isThinking && (
             <div className="p-3.5 rounded-2xl bg-zinc-50 border border-zinc-200 text-xs flex items-center gap-2 text-zinc-600">
               <RefreshCw className="w-3.5 h-3.5 animate-spin text-zinc-950" />
-              <span>Analyzing field coordinates, batter arcs & Law 28 restrictions...</span>
+              <span>Analyzing live field telemetry & spatial coordinates with Gemini 2.5 Flash...</span>
             </div>
           )}
         </div>
 
-        {/* 6. Quick Query Pills (Including beginner questions) */}
+        {/* 6. Quick Query Pills */}
         <div className="flex flex-wrap gap-1.5 mb-2.5">
           {AI_TACTICAL_DATA.sampleQueries.map((item, idx) => (
             <button
